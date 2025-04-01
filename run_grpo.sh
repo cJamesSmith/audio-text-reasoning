@@ -1,8 +1,8 @@
 #!/bin/bash
 
 OUT_DIR=exp/model
-MODEL_NP=Qwen/Qwen2-Audio-7B-Instruct
-DATA_FILE=data/AVQA/train_qa.data
+MODEL_NP=$HOME/data/models/Qwen2-Audio-7B-Instruct
+DATA_FILE=$HOME/audio-text-reasoning/data/train_qa.jsonl
 
 GPU_NUM=$(nvidia-smi -L | wc -l)
 NODE_NUM=1
@@ -20,4 +20,4 @@ torchrun --nproc_per_node=${GPU_NUM} \
     --model_name_or_path ${MODEL_NP} \
     --out_dir ${OUT_DIR} \
     --data_file ${DATA_FILE} \
-    --use_wandb false || exit 1
+    --use_wandb true || exit 1
