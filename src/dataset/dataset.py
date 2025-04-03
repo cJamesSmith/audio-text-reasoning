@@ -23,7 +23,20 @@ def _handle_avqa(obj_avqa):
     # question_template = f"{obj_avqa['question_text'].replace('video', 'audio')} {choice_str} Output the final answer in <answer> </answer>."
     # If you want to improve the thinking process, uncomment the next line and design your strategy.
     question_template = f"{obj_avqa['question_text'].replace('video', 'audio')} {choice_str} Let's think step by step. Output the thinking process in <think> </think> and final answer in <answer> </answer>."
-    obj_avqa["prompt"] = [{"role": "user", "content": [{"type": "audio", "audio_url": obj_avqa["audio_path"]}, {"type": "text", "text": question_template}]}]
+    # obj_avqa["prompt"] = [{"role": "user", "content": [{"type": "audio", "audio_url": obj_avqa["audio_path"]}, {"type": "text", "text": question_template}]}]  # QWen-Audio
+    obj_avqa["prompt"] = [
+        {
+            "role": "system",
+            "content": "You are Qwen, a virtual human developed by the Qwen Team, Alibaba Group, capable of perceiving auditory and visual inputs, as well as generating text and speech.",
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "audio", "audio": obj_avqa["audio_path"]},
+                {"type": "text", "text": question_template},
+            ],
+        },
+    ]  # QWen-Omni
     answer_str = obj_avqa["multi_choice"][obj_avqa["answer"]]
     obj_avqa["solution"] = f"<answer>{answer_str}</answer>"
     return obj_avqa

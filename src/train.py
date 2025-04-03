@@ -9,7 +9,7 @@ from trl import GRPOConfig
 from trainer.grpo_trainer import GRPOTrainer
 from utils.rewards import accuracy_reward, format_reward
 from dataset.dataset import AudioDataset
-
+import torch
 
 @dataclass
 class DataTrainingArguments:
@@ -46,23 +46,29 @@ def main():
     training_args = GRPOConfig(
         seed=42,
         data_seed=42,
-        output_dir=data_args.out_dir, 
-        deepspeed=data_args.config_path, 
-        max_prompt_length=512, 
-        per_device_train_batch_size=1, 
-        gradient_accumulation_steps=2, 
-        logging_steps=1, 
+        output_dir=data_args.out_dir,
+        deepspeed=data_args.config_path,
+        max_prompt_length=1024,
+        per_device_train_batch_size=1,
+        gradient_accumulation_steps=2,
+        logging_steps=1,
         bf16=True,
         report_to="wandb" if data_args.use_wandb == "true" else [],
-        gradient_checkpointing=False, 
-        num_train_epochs=2, 
+        gradient_checkpointing=False,
+        num_train_epochs=2,
         max_steps=1000,
-        run_name="AQA-GRPO", 
-        save_steps=100, 
-        save_only_model=True, 
+        run_name="AQA-GRPO",
+        save_steps=100,
+        save_only_model=True,
         temperature=1.0,
-        num_generations=5)
-    
+        num_generations=5,
+        # model_init_kwargs={
+        #     "torch_dtype": torch.bfloat16,
+        #     "attn_implementation": "flash_attention_2",
+        #     "enable_audio_output": False,
+        # },
+    )
+
     trainer = GRPOTrainer(
         model=data_args.model_name_or_path,
         reward_funcs=reward_funcs,

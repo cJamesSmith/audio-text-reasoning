@@ -25,6 +25,8 @@ from datasets import Dataset, IterableDataset
 from packaging import version
 from transformers import (
     Qwen2AudioForConditionalGeneration,
+    Qwen2_5OmniModel,
+    Qwen2_5OmniProcessor,
     AutoModelForCausalLM,
     AutoModelForSequenceClassification,
     AutoProcessor,
@@ -36,6 +38,7 @@ from transformers import (
     TrainerCallback,
     is_wandb_available,
 )
+from qwen_omni_utils import process_mm_info
 from transformers.integrations.deepspeed import is_deepspeed_zero3_enabled
 from transformers.utils import is_peft_available
 
@@ -179,6 +182,8 @@ class GRPOTrainer(Trainer):
                 )
             if "Qwen2-Audio" in model_id:
                 model = Qwen2AudioForConditionalGeneration.from_pretrained(model, **model_init_kwargs)
+            elif "Qwen2.5-Omni" in model_id:
+                model = Qwen2_5OmniModel.from_pretrained(model, **model_init_kwargs)
             else:
                 model = AutoModelForCausalLM.from_pretrained(model, **model_init_kwargs)
         else:
@@ -195,7 +200,9 @@ class GRPOTrainer(Trainer):
         # Reference model
         if is_deepspeed_zero3_enabled():
             if "Qwen2-Audio" in model_id:
-                 self.ref_model = Qwen2AudioForConditionalGeneration.from_pretrained(model_id, **model_init_kwargs)
+                self.ref_model = Qwen2AudioForConditionalGeneration.from_pretrained(model_id, **model_init_kwargs)
+            elif "Qwen2.5-Omni" in model_id:
+                self.ref_model = Qwen2_5OmniModel.from_pretrained(model_id, **model_init_kwargs)
             else:
                 self.ref_model = AutoModelForCausalLM.from_pretrained(model_id, **model_init_kwargs)
         elif not is_peft_model(model):
@@ -210,6 +217,10 @@ class GRPOTrainer(Trainer):
         if processing_class is None:
             if "Qwen2-Audio" in model_id:
                 processing_class = AutoProcessor.from_pretrained(model_id)
+                processing_class.pad_token_id = processing_class.tokenizer.pad_token_id
+                processing_class.eos_token_id = processing_class.tokenizer.eos_token_id
+            elif "Qwen2.5-Omni" in model_id:
+                processing_class = Qwen2_5OmniProcessor.from_pretrained(model_id)
                 processing_class.pad_token_id = processing_class.tokenizer.pad_token_id
                 processing_class.eos_token_id = processing_class.tokenizer.eos_token_id
             else:
@@ -335,14 +346,19 @@ class GRPOTrainer(Trainer):
      
         prompts = [x["prompt"] for x in inputs]
         prompts_text = [maybe_apply_chat_template(example, self.processing_class)["prompt"] for example in inputs]
-        audios = [x["audio"] for x in inputs]
-        prompt_inputs = self.processing_class(
-            text=prompts_text,
-            audios=audios,
-            sampling_rate=16000,
-            return_tensors="pt",
-            padding=True
-        )
+        if "omni" in self.model.config.model_type:
+            prompts_text = [pt[0] for pt in prompts_text]
+            audios, images, videos = process_mm_info(prompts, use_audio_in_video=False)
+            prompt_inputs = self.processing_class(text=prompts_text, audios=audios, images=images, videos=videos, return_tensors="pt", padding=True, use_audio_in_video=False)
+        else:
+            audios = [x["audio"] for x in inputs]
+            prompt_inputs = self.processing_class(
+                text=prompts_text,
+                audios=audios,
+                sampling_rate=16000,
+                return_tensors="pt",
+                padding=True
+            )
         prompt_inputs = super()._prepare_inputs(prompt_inputs)
 
         prompt_ids, prompt_mask = prompt_inputs["input_ids"], prompt_inputs["attention_mask"]
@@ -375,16 +391,25 @@ class GRPOTrainer(Trainer):
         features_values = features_values.repeat(self.num_generations, 1, 1)
         features_masks = features_masks.repeat_interleave(self.num_generations, dim=0)
 
-        per_token_logps = self._get_per_token_logps(model, prompt_completion_ids, attention_mask, features_values, features_masks)
+        if "omni" in self.model.config.model_type:
+            per_token_logps = self._get_per_token_logps(model.thinker, prompt_completion_ids, attention_mask, features_values, features_masks)
+        else:
+            per_token_logps = self._get_per_token_logps(model, prompt_completion_ids, attention_mask, features_values, features_masks)
         # Get rid of the prompt (-1 because of the shift done in get_per_token_logps)
         per_token_logps = per_token_logps[:, prompt_length - 1 :]
 
         with torch.inference_mode():
             if self.ref_model is not None:
-                ref_per_token_logps = self._get_per_token_logps(self.ref_model, prompt_completion_ids, attention_mask, features_values, features_masks)
+                if "omni" in self.model.config.model_type:
+                    ref_per_token_logps = self._get_per_token_logps(self.ref_model.thinker, prompt_completion_ids, attention_mask, features_values, features_masks)
+                else:
+                    ref_per_token_logps = self._get_per_token_logps(self.ref_model, prompt_completion_ids, attention_mask, features_values, features_masks)
             else:
                 with self.accelerator.unwrap_model(model).disable_adapter():
-                    ref_per_token_logps = self._get_per_token_logps(model, prompt_completion_ids, attention_mask, features_values, features_masks)
+                    if "omni" in self.model.config.model_type:
+                        ref_per_token_logps = self._get_per_token_logps(model.thinker, prompt_completion_ids, attention_mask, features_values, features_masks)
+                    else:
+                        ref_per_token_logps = self._get_per_token_logps(model, prompt_completion_ids, attention_mask, features_values, features_masks)
         ref_per_token_logps = ref_per_token_logps[:, prompt_length - 1 :]
 
         # Compute the KL divergence between the model and the reference model
